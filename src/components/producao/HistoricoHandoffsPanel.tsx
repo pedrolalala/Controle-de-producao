@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react'
 import { Loader2, ClipboardList } from 'lucide-react'
 import { listarHandoffs, type ProducaoPedidoHandoffRow } from '@/services/producao'
 
-// SPEC-156 Módulo 1 — histórico de handoffs (quem entregou/recebeu) de um
-// pedido, expandido inline na linha da tabela (mesmo padrão de
-// FornecedoresDaMarcaPanel.tsx em Marcas.tsx).
+// SPEC-156 — histórico de handoffs (quem entregou/recebeu) de um pedido,
+// expandido inline na linha da tabela.
 
 interface Props {
   producaoPedidoId: string
