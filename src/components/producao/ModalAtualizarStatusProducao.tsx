@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast'
 import {
   atualizarStatusProducaoPedido,
   marcarProducaoPedidoPronto,
+  normalizarStatus,
   STATUS_SUGESTOES,
   STATUS_LABEL,
   type ProducaoPedidoRow,
@@ -50,7 +51,7 @@ export function ModalAtualizarStatusProducao({ open, onOpenChange, pedido, onSuc
 
   if (!pedido) return null
 
-  const statusNormalizado = status.trim().toLowerCase().replace(/\s+/g, '_')
+  const statusNormalizado = normalizarStatus(status)
   const ehPronto = statusNormalizado === 'pronto'
   const podeSalvar = !!status.trim() && (!ehPronto || !!dataFicouPronto)
 

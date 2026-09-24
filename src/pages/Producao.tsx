@@ -1,7 +1,8 @@
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Select,
   SelectContent,
@@ -29,16 +30,23 @@ import {
   Ruler,
   ClipboardCheck,
   ExternalLink,
+  MessageSquare,
+  AlertTriangle,
+  Pencil,
+  Paperclip,
+  AlertOctagon,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { ModalNovoPedidoProducao } from '@/components/producao/ModalNovoPedidoProducao'
 import { ModalAtualizarStatusProducao } from '@/components/producao/ModalAtualizarStatusProducao'
 import { ModalHandoffProducao } from '@/components/producao/ModalHandoffProducao'
-import { HistoricoHandoffsPanel } from '@/components/producao/HistoricoHandoffsPanel'
+import { ModalOcorrenciaProducao } from '@/components/producao/ModalOcorrenciaProducao'
+import { PedidoDetalhesExpandido } from '@/components/producao/PedidoDetalhesExpandido'
 import {
   listarProducaoPedidos,
   getEmpresas,
+  normalizarStatus,
   TIPO_PECA_LABEL,
   PRIORIDADE_LABEL,
   STATUS_LABEL,
@@ -61,8 +69,18 @@ const TIPOS: Array<{ value: TipoPecaProducao | 'todos'; label: string }> = [
 
 const PRIORIDADE_BADGE: Record<PrioridadeProducao, string> = {
   normal: 'bg-slate-100 border-slate-200 text-slate-700',
-  alta: 'bg-amber-50 border-amber-200 text-amber-700',
   urgente: 'bg-red-50 border-red-200 text-red-700',
+}
+
+// SPEC-161 Prioridade 6: "Aguardando Material" é a situação mais crítica
+// do fluxo ("é a situação mais crítica") — aparece sempre primeiro na
+// listagem, independente do filtro/ordenação atual (data_pedido desc).
+function ordenarComAguardandoMaterialPrimeiro(pedidos: ProducaoPedidoRow[]): ProducaoPedidoRow[] {
+  return [...pedidos].sort((a, b) => {
+    const pa = normalizarStatus(a.status) === 'aguardando_material' ? 0 : 1
+    const pb = normalizarStatus(b.status) === 'aguardando_material' ? 0 : 1
+    return pa - pb
+  })
 }
 
 function statusBadgeClass(status: string): string {
@@ -95,12 +113,17 @@ export default function Producao() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
 
   const [modalNovoOpen, setModalNovoOpen] = useState(false)
+  const [pedidoEditando, setPedidoEditando] = useState<ProducaoPedidoRow | null>(null)
   const [pedidoStatusSelecionado, setPedidoStatusSelecionado] = useState<ProducaoPedidoRow | null>(
     null,
   )
   const [pedidoHandoffSelecionado, setPedidoHandoffSelecionado] =
     useState<ProducaoPedidoRow | null>(null)
+  const [pedidoOcorrenciaSelecionado, setPedidoOcorrenciaSelecionado] =
+    useState<ProducaoPedidoRow | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const pedidosOrdenados = useMemo(() => ordenarComAguardandoMaterialPrimeiro(pedidos), [pedidos])
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchInput), 400)
@@ -213,7 +236,6 @@ export default function Producao() {
             <SelectContent>
               <SelectItem value="todas">Toda prioridade</SelectItem>
               <SelectItem value="normal">{PRIORIDADE_LABEL.normal}</SelectItem>
-              <SelectItem value="alta">{PRIORIDADE_LABEL.alta}</SelectItem>
               <SelectItem value="urgente">{PRIORIDADE_LABEL.urgente}</SelectItem>
             </SelectContent>
           </Select>
@@ -277,7 +299,7 @@ export default function Producao() {
                 <TableHead className="w-[80px] text-slate-600 font-semibold text-xs uppercase tracking-wide">
                   PDFs
                 </TableHead>
-                <TableHead className="pr-4 sm:pr-6 w-[220px] text-right text-slate-600 font-semibold text-xs uppercase tracking-wide">
+                <TableHead className="pr-4 sm:pr-6 w-[280px] text-right text-slate-600 font-semibold text-xs uppercase tracking-wide">
                   Ação
                 </TableHead>
               </TableRow>
@@ -292,7 +314,7 @@ export default function Producao() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ) : pedidos.length === 0 ? (
+              ) : pedidosOrdenados.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={11} className="h-40 text-center">
                     <div className="flex flex-col items-center text-slate-400">
@@ -307,24 +329,36 @@ export default function Producao() {
                   </TableCell>
                 </TableRow>
               ) : (
-                pedidos.map((p) => {
+                pedidosOrdenados.map((p) => {
                   const expandido = expandedId === p.id
                   return (
                     <Fragment key={p.id}>
                       <TableRow className="h-14 border-b border-slate-50">
                         <TableCell className="pl-4 sm:pl-6 align-middle py-2">
-                          <button
-                            type="button"
-                            title="Ver histórico de handoffs"
-                            className="text-slate-400 hover:text-slate-700"
-                            onClick={() => setExpandedId((prev) => (prev === p.id ? null : p.id))}
-                          >
-                            {expandido ? (
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5" />
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              title="Ver detalhes (observação, histórico de prazo, edições e handoffs)"
+                              className="text-slate-400 hover:text-slate-700"
+                              onClick={() => setExpandedId((prev) => (prev === p.id ? null : p.id))}
+                            >
+                              {expandido ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                            {p.observacao && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <MessageSquare className="w-3 h-3 text-amber-500 shrink-0" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-[280px]">
+                                  <p className="text-xs whitespace-pre-wrap">{p.observacao}</p>
+                                </TooltipContent>
+                              </Tooltip>
                             )}
-                          </button>
+                          </div>
                         </TableCell>
                         <TableCell className="align-middle py-2">
                           <span className="inline-flex items-center gap-1 text-xs text-slate-600">
@@ -355,7 +389,29 @@ export default function Producao() {
                           </span>
                         </TableCell>
                         <TableCell className="align-middle py-2">
-                          <span className="text-sm text-slate-600">{fmtDate(p.data_prazo)}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="text-sm text-slate-600">{fmtDate(p.data_prazo)}</span>
+                            {p.prazo_alteracoes_count > 0 && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedId((prev) => (prev === p.id ? null : p.id))
+                                    }
+                                  >
+                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="text-xs">
+                                    Prazo já foi alterado {p.prazo_alteracoes_count}x — clique para
+                                    ver o motivo.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="align-middle py-2">
                           <Badge
@@ -374,6 +430,17 @@ export default function Producao() {
                               {STATUS_LABEL[p.status] ?? p.status}
                             </Badge>
                           </button>
+                          {p.ocorrencias_count > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedId((prev) => (prev === p.id ? null : p.id))}
+                              title="Clique para ver as ocorrências"
+                              className="flex items-center gap-1 text-[11px] text-red-600 mt-0.5 hover:underline"
+                            >
+                              <AlertOctagon className="w-3 h-3" /> {p.ocorrencias_count}{' '}
+                              ocorrência(s)
+                            </button>
+                          )}
                           {p.data_ficou_pronto && (
                             <p className="text-[11px] text-slate-400 mt-0.5">
                               Pronto em {fmtDate(p.data_ficou_pronto)}
@@ -399,16 +466,30 @@ export default function Producao() {
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1 text-primary hover:underline text-[11px]"
                               >
-                                <ExternalLink className="w-3 h-3" /> Desenho
+                                <ExternalLink className="w-3 h-3" /> Desenho (antigo)
                               </a>
                             )}
-                            {!p.pdf_pedido_url && !p.pdf_desenho_url && (
+                            {p.anexos_count > 0 && (
+                              <span className="inline-flex items-center gap-1 text-slate-500 text-[11px]">
+                                <Paperclip className="w-3 h-3" /> {p.anexos_count} anexo(s)
+                              </span>
+                            )}
+                            {!p.pdf_pedido_url && !p.pdf_desenho_url && p.anexos_count === 0 && (
                               <span className="text-[11px] text-slate-400">—</span>
                             )}
                           </div>
                         </TableCell>
                         <TableCell className="pr-4 sm:pr-6 text-right align-middle py-2">
                           <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => setPedidoEditando(p)}
+                            >
+                              <Pencil className="w-3.5 h-3.5 mr-1" />
+                              Editar
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -426,13 +507,22 @@ export default function Producao() {
                               <ClipboardCheck className="w-3.5 h-3.5 mr-1" />
                               Handoff
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-red-700 border-red-200 hover:bg-red-50"
+                              onClick={() => setPedidoOcorrenciaSelecionado(p)}
+                            >
+                              <AlertOctagon className="w-3.5 h-3.5 mr-1" />
+                              Ocorrência
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
                       {expandido && (
                         <TableRow className="hover:bg-transparent">
                           <TableCell colSpan={11} className="p-0">
-                            <HistoricoHandoffsPanel producaoPedidoId={p.id} />
+                            <PedidoDetalhesExpandido pedido={p} />
                           </TableCell>
                         </TableRow>
                       )}
@@ -451,6 +541,13 @@ export default function Producao() {
         onSuccess={loadPedidos}
       />
 
+      <ModalNovoPedidoProducao
+        open={!!pedidoEditando}
+        onOpenChange={(v) => !v && setPedidoEditando(null)}
+        onSuccess={loadPedidos}
+        pedido={pedidoEditando}
+      />
+
       <ModalAtualizarStatusProducao
         open={!!pedidoStatusSelecionado}
         onOpenChange={(v) => !v && setPedidoStatusSelecionado(null)}
@@ -462,6 +559,13 @@ export default function Producao() {
         open={!!pedidoHandoffSelecionado}
         onOpenChange={(v) => !v && setPedidoHandoffSelecionado(null)}
         pedido={pedidoHandoffSelecionado}
+        onSuccess={loadPedidos}
+      />
+
+      <ModalOcorrenciaProducao
+        open={!!pedidoOcorrenciaSelecionado}
+        onOpenChange={(v) => !v && setPedidoOcorrenciaSelecionado(null)}
+        pedido={pedidoOcorrenciaSelecionado}
         onSuccess={loadPedidos}
       />
     </div>

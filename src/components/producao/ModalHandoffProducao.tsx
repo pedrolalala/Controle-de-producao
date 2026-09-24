@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -6,11 +6,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Loader2, ClipboardCheck } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Loader2, ClipboardCheck, AlertTriangle } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import {
   getUsuariosAtivos,
@@ -24,11 +30,35 @@ import {
 // pelo Vinícius. Os dois lados são OBRIGATÓRIOS JUNTOS — nunca salva com só
 // um preenchido.
 //
-// entregue_por_usuario_id/recebido_por_usuario_id são "melhor esforço":
-// se o nome digitado bater exatamente com um usuário ativo, o id é
-// resolvido junto; senão fica nulo e só o nome (texto livre) é gravado —
-// nem todo funcionário citado na reunião (Cláudio/João/Manoel/Antônio/
-// Leandro/Alexandre/Matheus) tem login confirmado (pendência da SPEC-156).
+// SPEC-161 Prioridade 5 (reunião 22/09/2026) — decisão do usuário: "não
+// importa por que vou criar o login de cada um quando for usar!" — os dois
+// campos passam a ser FK real pra `usuarios` (sem fallback de texto livre),
+// cada um restrito à lista fixa de pessoas definida na reunião:
+// "Entregue por" = Manuel, João, Cláudio (produção); "Recebido por" =
+// Mateus, Vitória, Alexandre, Leandro, Antônio, Vinícius.
+//
+// ATENÇÃO: confirmado no banco real (22/09/2026) que só "Vinícius" tem
+// login em `usuarios` hoje — as outras 8 pessoas ainda não. Os selects
+// abaixo só mostram quem já tem login; se a lista aparecer vazia/incompleta
+// é porque o Hub ainda não criou o login dessa pessoa (decisão explícita do
+// usuário foi criar os logins antes de usar o handoff — não reintroduzir
+// texto livre aqui).
+
+const ENTREGA_NOMES = ['Manuel', 'João', 'Cláudio']
+const RECEBIMENTO_NOMES = ['Mateus', 'Vitória', 'Alexandre', 'Leandro', 'Antônio', 'Vinícius']
+
+function normalizarNome(nome: string): string {
+  return nome
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+function filtrarPorNomes(usuarios: UsuarioSimples[], nomes: string[]): UsuarioSimples[] {
+  const alvo = nomes.map(normalizarNome)
+  return usuarios.filter((u) => alvo.includes(normalizarNome(u.nome)))
+}
 
 interface Props {
   open: boolean
@@ -40,8 +70,8 @@ interface Props {
 export function ModalHandoffProducao({ open, onOpenChange, pedido, onSuccess }: Props) {
   const { toast } = useToast()
   const [usuarios, setUsuarios] = useState<UsuarioSimples[]>([])
-  const [entreguePorNome, setEntreguePorNome] = useState('')
-  const [recebidoPorNome, setRecebidoPorNome] = useState('')
+  const [entreguePorId, setEntreguePorId] = useState('')
+  const [recebidoPorId, setRecebidoPorId] = useState('')
   const [observacao, setObservacao] = useState('')
   const [salvando, setSalvando] = useState(false)
 
@@ -50,37 +80,41 @@ export function ModalHandoffProducao({ open, onOpenChange, pedido, onSuccess }: 
     getUsuariosAtivos()
       .then(setUsuarios)
       .catch(() => {
-        // silencioso — segue funcionando com texto livre sem sugestões
+        // silencioso — selects ficam vazios, usuário percebe ao tentar salvar
       })
   }, [open])
 
   useEffect(() => {
     if (!open) return
-    setEntreguePorNome('')
-    setRecebidoPorNome('')
+    setEntreguePorId('')
+    setRecebidoPorId('')
     setObservacao('')
   }, [open, pedido?.id])
 
+  const usuariosEntrega = useMemo(() => filtrarPorNomes(usuarios, ENTREGA_NOMES), [usuarios])
+  const usuariosRecebimento = useMemo(
+    () => filtrarPorNomes(usuarios, RECEBIMENTO_NOMES),
+    [usuarios],
+  )
+
   if (!pedido) return null
 
-  function resolverUsuarioId(nome: string): string | null {
-    const match = usuarios.find((u) => u.nome.trim().toLowerCase() === nome.trim().toLowerCase())
-    return match?.id ?? null
-  }
-
-  const podeSalvar = !!entreguePorNome.trim() && !!recebidoPorNome.trim()
+  const podeSalvar = !!entreguePorId && !!recebidoPorId
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!podeSalvar || !pedido) return
+    const entregador = usuariosEntrega.find((u) => u.id === entreguePorId)
+    const recebedor = usuariosRecebimento.find((u) => u.id === recebidoPorId)
+    if (!entregador || !recebedor) return
     setSalvando(true)
     try {
       await registrarHandoff({
         producao_pedido_id: pedido.id,
-        entregue_por_usuario_id: resolverUsuarioId(entreguePorNome),
-        entregue_por_nome: entreguePorNome,
-        recebido_por_usuario_id: resolverUsuarioId(recebidoPorNome),
-        recebido_por_nome: recebidoPorNome,
+        entregue_por_usuario_id: entregador.id,
+        entregue_por_nome: entregador.nome,
+        recebido_por_usuario_id: recebedor.id,
+        recebido_por_nome: recebedor.nome,
         observacao: observacao || null,
       })
       toast({ title: 'Handoff registrado' })
@@ -120,31 +154,47 @@ export function ModalHandoffProducao({ open, onOpenChange, pedido, onSuccess }: 
 
           <div className="space-y-2">
             <Label>Entregue por *</Label>
-            <Input
-              list="usuarios-producao"
-              required
-              value={entreguePorNome}
-              onChange={(e) => setEntreguePorNome(e.target.value)}
-              placeholder="Nome de quem está entregando..."
-            />
+            <Select value={entreguePorId} onValueChange={setEntreguePorId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione..." />
+              </SelectTrigger>
+              <SelectContent>
+                {usuariosEntrega.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {usuariosEntrega.length === 0 && (
+              <p className="text-[11px] text-red-600 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                Nenhum login de {ENTREGA_NOMES.join(', ')} encontrado em Usuários ainda.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
             <Label>Recebido por *</Label>
-            <Input
-              list="usuarios-producao"
-              required
-              value={recebidoPorNome}
-              onChange={(e) => setRecebidoPorNome(e.target.value)}
-              placeholder="Nome de quem está recebendo..."
-            />
+            <Select value={recebidoPorId} onValueChange={setRecebidoPorId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione..." />
+              </SelectTrigger>
+              <SelectContent>
+                {usuariosRecebimento.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {usuariosRecebimento.length === 0 && (
+              <p className="text-[11px] text-red-600 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                Nenhum login de {RECEBIMENTO_NOMES.join(', ')} encontrado em Usuários ainda.
+              </p>
+            )}
           </div>
-
-          <datalist id="usuarios-producao">
-            {usuarios.map((u) => (
-              <option key={u.id} value={u.nome} />
-            ))}
-          </datalist>
 
           <div className="space-y-2">
             <Label>Observação</Label>

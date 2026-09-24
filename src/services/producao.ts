@@ -15,29 +15,58 @@ import { supabase } from '@/lib/supabase/client'
 // arquiteto_nome são texto livre.
 
 export type TipoPecaProducao = 'lineas_steccas' | 'peca_avulsa' | 'corte'
-export type PrioridadeProducao = 'normal' | 'alta' | 'urgente'
+// SPEC-161 Prioridade 2 (reunião 22/09/2026): removida a opção "Alta" —
+// "acho que a prioridade alta, acho que eu deixaria só normal e urgente,
+// senão vai fazer confusão lá com os meninos". Confirmado no banco real
+// (22/09/2026) que nenhum pedido existente usa 'alta' (só 'normal' e
+// 'urgente'), então não há de-para necessário. O CHECK do banco continua
+// aceitando 'alta' por segurança (dado histórico futuro improvável, mas
+// não há motivo pra travar o banco por causa disso), só a UI não oferece
+// mais essa opção.
+export type PrioridadeProducao = 'normal' | 'urgente'
 
-// Sugestões de status — texto livre no banco (sem CHECK), semeado a partir
-// do dado real observado na planilha (PRONTO/CANCELADO/EXCLUÍDO/ENTRADA
-// PARCIAL) + os status "vivos" descritos pelo Vinícius na reunião.
+// SPEC-161 Prioridade 6 (reunião 22/09/2026): lista final de status
+// discutida ao vivo com o Vinícius — "Pedido de Produção" é o status
+// inicial (grava a data do pedido), "Pronto" é o final, e no meio existem
+// ramos alternativos (nem todo pedido passa por todos). Continua texto
+// livre no banco (sem CHECK) — a lista abaixo é só sugestão via <datalist>,
+// mesmo padrão desde a SPEC-156 (dado sujo real na planilha original).
 export const STATUS_SUGESTOES = [
-  'em_andamento',
-  'aguardando_pintura',
+  'pedido_de_producao',
+  'aguardando_material',
   'com_terceiro',
+  'pintura',
+  'em_montagem',
+  'embalagem',
   'pronto',
-  'entrada_parcial',
-  'cancelado',
-  'excluido',
 ] as const
 
+// Status legados (valores reais já usados antes da Prioridade 6 da
+// SPEC-161) continuam válidos e com label pra exibição, só não entram mais
+// em STATUS_SUGESTOES.
 export const STATUS_LABEL: Record<string, string> = {
+  pedido_de_producao: 'Pedido de Produção',
+  aguardando_material: 'Aguardando Material',
+  com_terceiro: 'Produção com Terceiro',
+  pintura: 'Pintura',
+  em_montagem: 'Em Montagem',
+  embalagem: 'Embalagem',
+  pronto: 'Pronto',
+  // legados
   em_andamento: 'Em andamento',
   aguardando_pintura: 'Aguardando pintura',
-  com_terceiro: 'Com terceiro',
-  pronto: 'Pronto',
   entrada_parcial: 'Entrada parcial',
   cancelado: 'Cancelado',
   excluido: 'Excluído',
+}
+
+// Status inicial de um pedido novo (SPEC-161 Prioridade 6).
+export const STATUS_INICIAL = 'pedido_de_producao'
+
+// Normaliza um status digitado livremente pra comparação (mesmo critério
+// já usado em ModalAtualizarStatusProducao antes da SPEC-161).
+export function normalizarStatus(status: string): string {
+  return status.trim().toLowerCase().replace(/\s+/g, '_')
 }
 
 export const TIPO_PECA_LABEL: Record<TipoPecaProducao, string> = {
@@ -48,7 +77,6 @@ export const TIPO_PECA_LABEL: Record<TipoPecaProducao, string> = {
 
 export const PRIORIDADE_LABEL: Record<PrioridadeProducao, string> = {
   normal: 'Normal',
-  alta: 'Alta',
   urgente: 'Urgente',
 }
 
@@ -68,11 +96,9 @@ export interface UsuarioSimples {
   nome: string
 }
 
-// Usada nos campos de handoff/responsável — dropdown "melhor esforço" (nem
-// todo funcionário citado na reunião tem login confirmado em usuarios,
-// pendência aberta na SPEC-156). O nome digitado sempre é aceito mesmo sem
-// bater com um usuário da lista (entregue_por_nome/recebido_por_nome são
-// texto livre no banco).
+// Usada nos campos de handoff (SPEC-161 Prioridade 5: agora restritos a
+// listas fixas de pessoas via FK usuarios, ver ModalHandoffProducao.tsx) e
+// na trilha de auditoria (empresa/edição).
 export async function getUsuariosAtivos(): Promise<UsuarioSimples[]> {
   const { data, error } = await (supabase as any)
     .from('usuarios')
@@ -103,6 +129,12 @@ export interface ProducaoPedidoRow {
   created_by: string | null
   created_at: string
   updated_at: string
+  // SPEC-161: contagens usadas pra indicadores na listagem (P3/P8), sem
+  // precisar de uma query extra por linha.
+  anexos_count: number
+  prazo_alteracoes_count: number
+  // SPEC-162: indicador de ocorrências na listagem.
+  ocorrencias_count: number
 }
 
 export interface ListarProducaoPedidosFiltro {
@@ -118,7 +150,9 @@ export async function listarProducaoPedidos(
 ): Promise<ProducaoPedidoRow[]> {
   let query = (supabase as any)
     .from('producao_pedidos')
-    .select('*, empresas(nome)')
+    .select(
+      '*, empresas(nome), producao_pedido_anexos(count), producao_pedido_prazo_alteracoes(count), producao_pedido_ocorrencias(count)',
+    )
     .order('data_pedido', { ascending: false })
     .limit(500)
 
@@ -156,6 +190,9 @@ export async function listarProducaoPedidos(
     created_by: d.created_by,
     created_at: d.created_at,
     updated_at: d.updated_at,
+    anexos_count: d.producao_pedido_anexos?.[0]?.count ?? 0,
+    prazo_alteracoes_count: d.producao_pedido_prazo_alteracoes?.[0]?.count ?? 0,
+    ocorrencias_count: d.producao_pedido_ocorrencias?.[0]?.count ?? 0,
   }))
 }
 
@@ -184,7 +221,7 @@ function sanitizeFileName(name: string): string {
 export async function uploadArquivoProducao(
   file: File,
   producaoPedidoId: string,
-  tipo: 'pedido' | 'desenho',
+  tipo: 'pedido' | 'desenho' | 'anexo',
 ): Promise<string> {
   const filePath = `${producaoPedidoId}/${tipo}-${Date.now()}-${sanitizeFileName(file.name)}`
 
@@ -213,6 +250,10 @@ export async function criarProducaoPedido(input: CriarProducaoPedidoInput): Prom
       data_prazo: input.data_prazo || null,
       prioridade: input.prioridade,
       observacao: input.observacao?.trim() || null,
+      // SPEC-161 Prioridade 6: todo pedido novo nasce como "Pedido de
+      // Produção" (status inicial do fluxo), em vez do antigo default
+      // 'em_andamento' da coluna.
+      status: STATUS_INICIAL,
       created_by: userData?.user?.id ?? null,
     })
     .select('id')
@@ -319,6 +360,277 @@ export async function registrarHandoff(input: RegistrarHandoffInput): Promise<vo
     recebido_por_usuario_id: input.recebido_por_usuario_id || null,
     recebido_por_nome: recebidoPorNome,
     observacao: input.observacao?.trim() || null,
+  })
+  if (error) throw error
+}
+
+// ---------------------------------------------------------------------
+// SPEC-161 Prioridade 3 — anexos múltiplos (desenhos), separados,
+// editáveis a qualquer momento (não só na criação).
+// ---------------------------------------------------------------------
+
+export interface ProducaoPedidoAnexoRow {
+  id: string
+  producao_pedido_id: string
+  url: string
+  nome_arquivo: string | null
+  criado_em: string
+  criado_por: string | null
+}
+
+export async function listarAnexos(producaoPedidoId: string): Promise<ProducaoPedidoAnexoRow[]> {
+  const { data, error } = await (supabase as any)
+    .from('producao_pedido_anexos')
+    .select('*')
+    .eq('producao_pedido_id', producaoPedidoId)
+    .order('criado_em', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as ProducaoPedidoAnexoRow[]
+}
+
+export async function adicionarAnexo(
+  producaoPedidoId: string,
+  file: File,
+): Promise<ProducaoPedidoAnexoRow> {
+  const url = await uploadArquivoProducao(file, producaoPedidoId, 'anexo')
+  const { data: userData } = await supabase.auth.getUser()
+
+  const { data: inserted, error } = await (supabase as any)
+    .from('producao_pedido_anexos')
+    .insert({
+      producao_pedido_id: producaoPedidoId,
+      url,
+      nome_arquivo: file.name,
+      criado_por: userData?.user?.id ?? null,
+    })
+    .select('*')
+    .single()
+  if (error) throw error
+  return inserted as ProducaoPedidoAnexoRow
+}
+
+export async function removerAnexo(anexoId: string): Promise<void> {
+  const { error } = await (supabase as any)
+    .from('producao_pedido_anexos')
+    .delete()
+    .eq('id', anexoId)
+  if (error) throw error
+}
+
+// ---------------------------------------------------------------------
+// SPEC-161 Prioridade 8 — histórico de alteração de prazo, com
+// justificativa obrigatória.
+// ---------------------------------------------------------------------
+
+export interface ProducaoPedidoPrazoAlteracaoRow {
+  id: string
+  producao_pedido_id: string
+  prazo_anterior: string | null
+  prazo_novo: string | null
+  motivo: string
+  alterado_por: string | null
+  alterado_por_nome: string | null
+  alterado_em: string
+}
+
+export async function listarPrazoAlteracoes(
+  producaoPedidoId: string,
+): Promise<ProducaoPedidoPrazoAlteracaoRow[]> {
+  const { data, error } = await (supabase as any)
+    .from('producao_pedido_prazo_alteracoes')
+    .select('*, usuarios:alterado_por(nome)')
+    .eq('producao_pedido_id', producaoPedidoId)
+    .order('alterado_em', { ascending: false })
+  if (error) throw error
+  return ((data ?? []) as any[]).map((d) => ({
+    id: d.id,
+    producao_pedido_id: d.producao_pedido_id,
+    prazo_anterior: d.prazo_anterior,
+    prazo_novo: d.prazo_novo,
+    motivo: d.motivo,
+    alterado_por: d.alterado_por,
+    alterado_por_nome: d.usuarios?.nome ?? null,
+    alterado_em: d.alterado_em,
+  }))
+}
+
+// ---------------------------------------------------------------------
+// SPEC-161 Prioridade 4 — editar pedido depois de criado, com trilha de
+// auditoria (quem + quando).
+// ---------------------------------------------------------------------
+
+export interface ProducaoPedidoEdicaoRow {
+  id: string
+  producao_pedido_id: string
+  editado_por: string | null
+  editado_por_nome: string | null
+  editado_em: string
+}
+
+export async function listarEdicoes(
+  producaoPedidoId: string,
+): Promise<ProducaoPedidoEdicaoRow[]> {
+  const { data, error } = await (supabase as any)
+    .from('producao_pedido_edicoes')
+    .select('*, usuarios:editado_por(nome)')
+    .eq('producao_pedido_id', producaoPedidoId)
+    .order('editado_em', { ascending: false })
+  if (error) throw error
+  return ((data ?? []) as any[]).map((d) => ({
+    id: d.id,
+    producao_pedido_id: d.producao_pedido_id,
+    editado_por: d.editado_por,
+    editado_por_nome: d.usuarios?.nome ?? null,
+    editado_em: d.editado_em,
+  }))
+}
+
+export interface AtualizarProducaoPedidoInput {
+  id: string
+  tipo_peca: TipoPecaProducao
+  numero_pedido?: string | null
+  data_pedido: string
+  empresa_id: string
+  sistema_origem?: string | null
+  arquiteto_nome?: string | null
+  cliente_nome?: string | null
+  data_prazo?: string | null
+  prioridade: PrioridadeProducao
+  observacao?: string | null
+  pdf_pedido?: File | null
+  // Obrigatório apenas quando data_prazo muda em relação ao valor
+  // carregado (validado tanto aqui quanto na UI — defesa em profundidade).
+  motivo_alteracao_prazo?: string | null
+}
+
+// SPEC-161 Prioridade 4 (editar pedido) + Prioridade 8 (justificativa
+// obrigatória ao mudar prazo). Sem restrição de quem pode editar (decisão
+// do usuário) — toda edição grava um registro em producao_pedido_edicoes
+// (quem + quando); toda mudança de data_prazo (comparada ao valor anterior
+// já salvo, `prazoAnterior`) grava um registro em
+// producao_pedido_prazo_alteracoes com motivo obrigatório.
+export async function atualizarProducaoPedido(
+  input: AtualizarProducaoPedidoInput,
+  prazoAnterior: string | null,
+): Promise<void> {
+  const prazoNovo = input.data_prazo || null
+  const prazoMudou = prazoNovo !== (prazoAnterior || null)
+  if (prazoMudou && !input.motivo_alteracao_prazo?.trim()) {
+    throw new Error('Informe o motivo da alteração de prazo.')
+  }
+
+  const { data: userData } = await supabase.auth.getUser()
+  const usuarioId = userData?.user?.id ?? null
+
+  const updates: Record<string, unknown> = {
+    tipo_peca: input.tipo_peca,
+    numero_pedido: input.numero_pedido?.trim() || null,
+    data_pedido: input.data_pedido,
+    empresa_id: input.empresa_id,
+    sistema_origem: input.tipo_peca === 'lineas_steccas' ? input.sistema_origem || null : null,
+    arquiteto_nome: input.arquiteto_nome?.trim() || null,
+    cliente_nome: input.cliente_nome?.trim() || null,
+    data_prazo: prazoNovo,
+    prioridade: input.prioridade,
+    observacao: input.observacao?.trim() || null,
+  }
+
+  if (input.pdf_pedido) {
+    updates.pdf_pedido_url = await uploadArquivoProducao(input.pdf_pedido, input.id, 'pedido')
+  }
+
+  const { error } = await (supabase as any)
+    .from('producao_pedidos')
+    .update(updates)
+    .eq('id', input.id)
+  if (error) throw error
+
+  if (prazoMudou) {
+    const { error: prazoError } = await (supabase as any)
+      .from('producao_pedido_prazo_alteracoes')
+      .insert({
+        producao_pedido_id: input.id,
+        prazo_anterior: prazoAnterior || null,
+        prazo_novo: prazoNovo,
+        motivo: input.motivo_alteracao_prazo!.trim(),
+        alterado_por: usuarioId,
+      })
+    if (prazoError) throw prazoError
+  }
+
+  const { error: edicaoError } = await (supabase as any).from('producao_pedido_edicoes').insert({
+    producao_pedido_id: input.id,
+    editado_por: usuarioId,
+  })
+  if (edicaoError) throw edicaoError
+}
+
+// ---------------------------------------------------------------------
+// SPEC-162 — ocorrências registradas pela produção (desenho errado,
+// desenho incompleto, retrabalho de peça pronta...). Permitido em qualquer
+// status do pedido, inclusive "Pronto" — não há checagem de status aqui.
+// Append-only: sem editar/excluir pela aplicação.
+// ---------------------------------------------------------------------
+
+export const OCORRENCIA_CATEGORIAS = [
+  'desenho_errado',
+  'desenho_incompleto',
+  'retrabalho_peca_pronta',
+  'outro',
+] as const
+
+export const OCORRENCIA_CATEGORIA_LABEL: Record<string, string> = {
+  desenho_errado: 'Desenho errado',
+  desenho_incompleto: 'Desenho incompleto',
+  retrabalho_peca_pronta: 'Retrabalho de peça pronta',
+  outro: 'Outro',
+}
+
+export interface ProducaoPedidoOcorrenciaRow {
+  id: string
+  producao_pedido_id: string
+  categoria: string
+  descricao: string
+  registrado_por: string | null
+  registrado_por_nome: string | null
+  registrado_em: string
+}
+
+export async function listarOcorrencias(
+  producaoPedidoId: string,
+): Promise<ProducaoPedidoOcorrenciaRow[]> {
+  const { data, error } = await (supabase as any)
+    .from('producao_pedido_ocorrencias')
+    .select('*, usuarios:registrado_por(nome)')
+    .eq('producao_pedido_id', producaoPedidoId)
+    .order('registrado_em', { ascending: false })
+  if (error) throw error
+  return ((data ?? []) as any[]).map((d) => ({
+    id: d.id,
+    producao_pedido_id: d.producao_pedido_id,
+    categoria: d.categoria,
+    descricao: d.descricao,
+    registrado_por: d.registrado_por,
+    registrado_por_nome: d.usuarios?.nome ?? null,
+    registrado_em: d.registrado_em,
+  }))
+}
+
+export async function registrarOcorrencia(
+  producaoPedidoId: string,
+  categoria: string,
+  descricao: string,
+): Promise<void> {
+  if (!categoria.trim() || !descricao.trim()) {
+    throw new Error('Informe a categoria e a descrição da ocorrência.')
+  }
+  const { data: userData } = await supabase.auth.getUser()
+
+  const { error } = await (supabase as any).from('producao_pedido_ocorrencias').insert({
+    producao_pedido_id: producaoPedidoId,
+    categoria: categoria.trim(),
+    descricao: descricao.trim(),
+    registrado_por: userData?.user?.id ?? null,
   })
   if (error) throw error
 }
