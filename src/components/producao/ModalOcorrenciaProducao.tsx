@@ -6,6 +6,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -16,12 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Loader2, AlertOctagon } from 'lucide-react'
+import { Loader2, AlertOctagon, Camera } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import {
   registrarOcorrencia,
   OCORRENCIA_CATEGORIAS,
   OCORRENCIA_CATEGORIA_LABEL,
+  OCORRENCIA_OUTRO,
   STATUS_LABEL,
   type ProducaoPedidoRow,
 } from '@/services/producao'
@@ -30,6 +32,9 @@ import {
 // incompleto, retrabalho de peça pronta...). Disponível em qualquer status
 // do pedido, inclusive "Pronto" — não há bloqueio por status. Quem
 // registrou + quando são gravados automaticamente (login).
+//
+// Revisão 25/09/2026: "Outro" abre um campo livre (o texto digitado vira o
+// tipo gravado) e dá pra anexar fotos (opcional, várias).
 
 interface Props {
   open: boolean
@@ -41,25 +46,31 @@ interface Props {
 export function ModalOcorrenciaProducao({ open, onOpenChange, pedido, onSuccess }: Props) {
   const { toast } = useToast()
   const [categoria, setCategoria] = useState('')
+  const [outroTexto, setOutroTexto] = useState('')
   const [descricao, setDescricao] = useState('')
+  const [fotos, setFotos] = useState<File[]>([])
   const [salvando, setSalvando] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setCategoria('')
+    setOutroTexto('')
     setDescricao('')
+    setFotos([])
   }, [open, pedido?.id])
 
   if (!pedido) return null
 
-  const podeSalvar = !!categoria && !!descricao.trim()
+  const ehOutro = categoria === OCORRENCIA_OUTRO
+  const categoriaFinal = ehOutro ? outroTexto.trim() : categoria
+  const podeSalvar = !!categoriaFinal && !!descricao.trim()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!podeSalvar || !pedido) return
     setSalvando(true)
     try {
-      await registrarOcorrencia(pedido.id, categoria, descricao)
+      await registrarOcorrencia(pedido.id, categoriaFinal, descricao, fotos)
       toast({ title: 'Ocorrência registrada' })
       onOpenChange(false)
       onSuccess()
@@ -103,8 +114,17 @@ export function ModalOcorrenciaProducao({ open, onOpenChange, pedido, onSuccess 
                     {OCORRENCIA_CATEGORIA_LABEL[c]}
                   </SelectItem>
                 ))}
+                <SelectItem value={OCORRENCIA_OUTRO}>Outro (escrever)</SelectItem>
               </SelectContent>
             </Select>
+            {ehOutro && (
+              <Input
+                autoFocus
+                placeholder="Qual o tipo de ocorrência?"
+                value={outroTexto}
+                onChange={(e) => setOutroTexto(e.target.value)}
+              />
+            )}
           </div>
 
           <div className="space-y-2">
@@ -116,6 +136,22 @@ export function ModalOcorrenciaProducao({ open, onOpenChange, pedido, onSuccess 
               value={descricao}
               onChange={(e) => setDescricao(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <Camera className="w-3.5 h-3.5" /> Fotos (opcional)
+            </Label>
+            <Input
+              type="file"
+              accept="image/*"
+              multiple
+              className="cursor-pointer"
+              onChange={(e) => setFotos(Array.from(e.target.files ?? []))}
+            />
+            {fotos.length > 0 && (
+              <p className="text-[11px] text-slate-500">{fotos.length} foto(s) selecionada(s)</p>
+            )}
           </div>
 
           <DialogFooter className="pt-2 gap-3">

@@ -435,10 +435,15 @@ export default function Producao() {
                               type="button"
                               onClick={() => setExpandedId((prev) => (prev === p.id ? null : p.id))}
                               title="Clique para ver as ocorrências"
-                              className="flex items-center gap-1 text-[11px] text-red-600 mt-0.5 hover:underline"
+                              className={cn(
+                                'flex items-center gap-1 text-[11px] mt-0.5 hover:underline',
+                                p.ocorrencias_abertas_count > 0 ? 'text-red-600' : 'text-slate-400',
+                              )}
                             >
-                              <AlertOctagon className="w-3 h-3" /> {p.ocorrencias_count}{' '}
-                              ocorrência(s)
+                              <AlertOctagon className="w-3 h-3" />
+                              {p.ocorrencias_abertas_count > 0
+                                ? `${p.ocorrencias_abertas_count} ocorrência(s) em aberto`
+                                : `${p.ocorrencias_count} ocorrência(s) resolvida(s)`}
                             </button>
                           )}
                           {p.data_ficou_pronto && (
@@ -522,7 +527,7 @@ export default function Producao() {
                       {expandido && (
                         <TableRow className="hover:bg-transparent">
                           <TableCell colSpan={11} className="p-0">
-                            <PedidoDetalhesExpandido pedido={p} />
+                            <PedidoDetalhesExpandido pedido={p} onChange={loadPedidos} />
                           </TableCell>
                         </TableRow>
                       )}

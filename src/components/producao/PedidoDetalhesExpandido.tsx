@@ -1,16 +1,16 @@
-import { useEffect, useState } from 'react'
-import { Loader2, MessageSquare, AlertTriangle, AlertOctagon, History } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Loader2, MessageSquare, AlertTriangle, History } from 'lucide-react'
 import {
   listarPrazoAlteracoes,
   listarEdicoes,
   listarOcorrencias,
-  OCORRENCIA_CATEGORIA_LABEL,
   type ProducaoPedidoRow,
   type ProducaoPedidoOcorrenciaRow,
   type ProducaoPedidoPrazoAlteracaoRow,
   type ProducaoPedidoEdicaoRow,
 } from '@/services/producao'
 import { HistoricoHandoffsPanel } from './HistoricoHandoffsPanel'
+import { OcorrenciasPanel } from './OcorrenciasPanel'
 
 // SPEC-161 — painel expansível da linha de um pedido (mesma seta já usada
 // desde a SPEC-156 pra abrir o histórico de handoffs). Reúne:
@@ -22,6 +22,8 @@ import { HistoricoHandoffsPanel } from './HistoricoHandoffsPanel'
 
 interface Props {
   pedido: ProducaoPedidoRow
+  // Recarrega a listagem (contador de ocorrências em aberto na linha).
+  onChange?: () => void
 }
 
 function fmtDate(v: string | null): string {
@@ -35,11 +37,16 @@ function fmtDataHora(v: string): string {
   return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR')
 }
 
-export function PedidoDetalhesExpandido({ pedido }: Props) {
+export function PedidoDetalhesExpandido({ pedido, onChange }: Props) {
   const [prazoAlteracoes, setPrazoAlteracoes] = useState<ProducaoPedidoPrazoAlteracaoRow[]>([])
   const [edicoes, setEdicoes] = useState<ProducaoPedidoEdicaoRow[]>([])
   const [ocorrencias, setOcorrencias] = useState<ProducaoPedidoOcorrenciaRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [ocorrenciasRefresh, setOcorrenciasRefresh] = useState(0)
+  const recarregarOcorrencias = useCallback(() => {
+    setOcorrenciasRefresh((n) => n + 1)
+    onChange?.()
+  }, [onChange])
 
   useEffect(() => {
     let mounted = true
@@ -64,38 +71,15 @@ export function PedidoDetalhesExpandido({ pedido }: Props) {
     return () => {
       mounted = false
     }
-  }, [pedido.id, pedido.ocorrencias_count])
+  }, [pedido.id, pedido.ocorrencias_count, ocorrenciasRefresh])
 
   return (
     <div className="bg-slate-50 border-t border-slate-100 divide-y divide-slate-100">
-      <div className="px-6 py-3">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-          <AlertOctagon className="w-3.5 h-3.5" /> Ocorrências
-        </p>
-        {loading ? (
-          <div className="flex items-center gap-2 text-xs text-slate-400 py-1">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Carregando...
-          </div>
-        ) : ocorrencias.length === 0 ? (
-          <p className="text-xs text-slate-400 py-1">Nenhuma ocorrência registrada.</p>
-        ) : (
-          <ul className="space-y-1.5">
-            {ocorrencias.map((o) => (
-              <li key={o.id} className="text-xs text-slate-600">
-                <span className="font-medium text-red-700">
-                  {OCORRENCIA_CATEGORIA_LABEL[o.categoria] ?? o.categoria}
-                </span>
-                {' — '}
-                <span className="whitespace-pre-wrap">{o.descricao}</span>
-                <span className="text-slate-400">
-                  {' '}
-                  ({o.registrado_por_nome ?? 'usuário'} em {fmtDataHora(o.registrado_em)})
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <OcorrenciasPanel
+        ocorrencias={ocorrencias}
+        loading={loading}
+        onChange={recarregarOcorrencias}
+      />
 
       {pedido.observacao && (
         <div className="px-6 py-3">

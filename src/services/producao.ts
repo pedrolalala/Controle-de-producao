@@ -133,8 +133,9 @@ export interface ProducaoPedidoRow {
   // precisar de uma query extra por linha.
   anexos_count: number
   prazo_alteracoes_count: number
-  // SPEC-162: indicador de ocorrências na listagem.
+  // SPEC-162: indicador de ocorrências na listagem (total e em aberto).
   ocorrencias_count: number
+  ocorrencias_abertas_count: number
 }
 
 export interface ListarProducaoPedidosFiltro {
@@ -151,7 +152,7 @@ export async function listarProducaoPedidos(
   let query = (supabase as any)
     .from('producao_pedidos')
     .select(
-      '*, empresas(nome), producao_pedido_anexos(count), producao_pedido_prazo_alteracoes(count), producao_pedido_ocorrencias(count)',
+      '*, empresas(nome), producao_pedido_anexos(count), producao_pedido_prazo_alteracoes(count), producao_pedido_ocorrencias(resolvida_em)',
     )
     .order('data_pedido', { ascending: false })
     .limit(500)
@@ -192,7 +193,10 @@ export async function listarProducaoPedidos(
     updated_at: d.updated_at,
     anexos_count: d.producao_pedido_anexos?.[0]?.count ?? 0,
     prazo_alteracoes_count: d.producao_pedido_prazo_alteracoes?.[0]?.count ?? 0,
-    ocorrencias_count: d.producao_pedido_ocorrencias?.[0]?.count ?? 0,
+    ocorrencias_count: (d.producao_pedido_ocorrencias ?? []).length,
+    ocorrencias_abertas_count: (d.producao_pedido_ocorrencias ?? []).filter(
+      (o: { resolvida_em: string | null }) => !o.resolvida_em,
+    ).length,
   }))
 }
 
@@ -221,7 +225,7 @@ function sanitizeFileName(name: string): string {
 export async function uploadArquivoProducao(
   file: File,
   producaoPedidoId: string,
-  tipo: 'pedido' | 'desenho' | 'anexo',
+  tipo: 'pedido' | 'desenho' | 'anexo' | 'ocorrencia',
 ): Promise<string> {
   const filePath = `${producaoPedidoId}/${tipo}-${Date.now()}-${sanitizeFileName(file.name)}`
 
@@ -569,15 +573,23 @@ export async function atualizarProducaoPedido(
 // SPEC-162 — ocorrências registradas pela produção (desenho errado,
 // desenho incompleto, retrabalho de peça pronta...). Permitido em qualquer
 // status do pedido, inclusive "Pronto" — não há checagem de status aqui.
-// Append-only: sem editar/excluir pela aplicação.
+//
+// Revisão 25/09/2026 (decisões do usuário): além dos 3 tipos fixos, "Outro"
+// abre um campo livre e grava o texto digitado direto em `categoria` (sem
+// CHECK no banco); pode ter foto (0..N, fotos_urls); e pode ser marcada
+// como resolvida com a data em que isso aconteceu. Descrição/tipo
+// continuam imutáveis depois de registrados (GRANT de UPDATE só nas colunas
+// de resolução).
 // ---------------------------------------------------------------------
 
 export const OCORRENCIA_CATEGORIAS = [
   'desenho_errado',
   'desenho_incompleto',
   'retrabalho_peca_pronta',
-  'outro',
 ] as const
+
+// Valor de UI (nunca gravado): seleciona o campo livre.
+export const OCORRENCIA_OUTRO = 'outro'
 
 export const OCORRENCIA_CATEGORIA_LABEL: Record<string, string> = {
   desenho_errado: 'Desenho errado',
@@ -591,9 +603,12 @@ export interface ProducaoPedidoOcorrenciaRow {
   producao_pedido_id: string
   categoria: string
   descricao: string
+  fotos_urls: string[]
   registrado_por: string | null
   registrado_por_nome: string | null
   registrado_em: string
+  resolvida_em: string | null
+  resolvido_por_nome: string | null
 }
 
 export async function listarOcorrencias(
@@ -601,7 +616,7 @@ export async function listarOcorrencias(
 ): Promise<ProducaoPedidoOcorrenciaRow[]> {
   const { data, error } = await (supabase as any)
     .from('producao_pedido_ocorrencias')
-    .select('*, usuarios:registrado_por(nome)')
+    .select('*, registrador:registrado_por(nome), resolvedor:resolvido_por(nome)')
     .eq('producao_pedido_id', producaoPedidoId)
     .order('registrado_em', { ascending: false })
   if (error) throw error
@@ -610,9 +625,12 @@ export async function listarOcorrencias(
     producao_pedido_id: d.producao_pedido_id,
     categoria: d.categoria,
     descricao: d.descricao,
+    fotos_urls: d.fotos_urls ?? [],
     registrado_por: d.registrado_por,
-    registrado_por_nome: d.usuarios?.nome ?? null,
+    registrado_por_nome: d.registrador?.nome ?? null,
     registrado_em: d.registrado_em,
+    resolvida_em: d.resolvida_em,
+    resolvido_por_nome: d.resolvedor?.nome ?? null,
   }))
 }
 
@@ -620,17 +638,34 @@ export async function registrarOcorrencia(
   producaoPedidoId: string,
   categoria: string,
   descricao: string,
+  fotos: File[] = [],
 ): Promise<void> {
   if (!categoria.trim() || !descricao.trim()) {
-    throw new Error('Informe a categoria e a descrição da ocorrência.')
+    throw new Error('Informe o tipo e a descrição da ocorrência.')
   }
   const { data: userData } = await supabase.auth.getUser()
+
+  const fotosUrls: string[] = []
+  for (const foto of fotos) {
+    fotosUrls.push(await uploadArquivoProducao(foto, producaoPedidoId, 'ocorrencia'))
+  }
 
   const { error } = await (supabase as any).from('producao_pedido_ocorrencias').insert({
     producao_pedido_id: producaoPedidoId,
     categoria: categoria.trim(),
     descricao: descricao.trim(),
+    fotos_urls: fotosUrls,
     registrado_por: userData?.user?.id ?? null,
   })
+  if (error) throw error
+}
+
+export async function marcarOcorrenciaResolvida(id: string, resolvidaEm: string): Promise<void> {
+  if (!resolvidaEm) throw new Error('Informe a data em que a ocorrência foi resolvida.')
+  const { data: userData } = await supabase.auth.getUser()
+  const { error } = await (supabase as any)
+    .from('producao_pedido_ocorrencias')
+    .update({ resolvida_em: resolvidaEm, resolvido_por: userData?.user?.id ?? null })
+    .eq('id', id)
   if (error) throw error
 }
