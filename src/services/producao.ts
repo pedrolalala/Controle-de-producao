@@ -63,6 +63,11 @@ export const STATUS_LABEL: Record<string, string> = {
 // Status inicial de um pedido novo (SPEC-161 Prioridade 6).
 export const STATUS_INICIAL = 'pedido_de_producao'
 
+// SPEC-174 N11: valor de UI (nunca gravado como status) que seleciona o
+// campo de texto livre no modal de atualizar status — mesmo padrão já
+// usado em OCORRENCIA_OUTRO/ModalOcorrenciaProducao.
+export const STATUS_OUTRO = 'outro'
+
 // Normaliza um status digitado livremente pra comparação (mesmo critério
 // já usado em ModalAtualizarStatusProducao antes da SPEC-161).
 export function normalizarStatus(status: string): string {
@@ -668,4 +673,112 @@ export async function marcarOcorrenciaResolvida(id: string, resolvidaEm: string)
     .update({ resolvida_em: resolvidaEm, resolvido_por: userData?.user?.id ?? null })
     .eq('id', id)
   if (error) throw error
+}
+
+// ---------------------------------------------------------------------
+// SPEC-174 N10 — aba "Log" (só administrador): histórico de quem fez o
+// quê. Junta a trilha de auditoria genérica nova (producao_pedidos_log,
+// migration 20261001_174b_log_producao_garantia — cobre criação, qualquer
+// edição de campo e troca de status, inclusive pelo modal rápido) com os
+// eventos específicos que já existiam (ocorrências e handoffs). A RLS de
+// producao_pedidos_log só deixa administrador ler; para qualquer outro
+// papel essa query simplesmente volta vazia.
+// ---------------------------------------------------------------------
+
+export const LOG_ACAO_LABEL: Record<string, string> = {
+  criado: 'Pedido criado',
+  atualizado: 'Pedido atualizado',
+  status_alterado: 'Status alterado',
+}
+
+export interface LogProducaoEntry {
+  id: string
+  data_hora: string
+  usuario_nome: string | null
+  acao: string
+  pedido_numero: string | null
+  pedido_cliente: string | null
+  detalhe: string | null
+}
+
+export async function listarLogProducao(limite = 300): Promise<LogProducaoEntry[]> {
+  const [logs, ocorrencias, handoffs] = await Promise.all([
+    (supabase as any)
+      .from('producao_pedidos_log')
+      .select(
+        '*, usuarios:usuario_id(nome), producao_pedidos:producao_pedido_id(numero_pedido, cliente_nome)',
+      )
+      .order('criado_em', { ascending: false })
+      .limit(limite),
+    (supabase as any)
+      .from('producao_pedido_ocorrencias')
+      .select(
+        '*, registrador:registrado_por(nome), resolvedor:resolvido_por(nome), producao_pedidos:producao_pedido_id(numero_pedido, cliente_nome)',
+      )
+      .order('registrado_em', { ascending: false })
+      .limit(limite),
+    (supabase as any)
+      .from('producao_pedido_handoffs')
+      .select('*, producao_pedidos:producao_pedido_id(numero_pedido, cliente_nome)')
+      .order('data_hora', { ascending: false })
+      .limit(limite),
+  ])
+
+  if (logs.error) throw logs.error
+  if (ocorrencias.error) throw ocorrencias.error
+  if (handoffs.error) throw handoffs.error
+
+  const entradas: LogProducaoEntry[] = []
+
+  for (const d of (logs.data ?? []) as any[]) {
+    entradas.push({
+      id: `log-${d.id}`,
+      data_hora: d.criado_em,
+      usuario_nome: d.usuarios?.nome ?? null,
+      acao: LOG_ACAO_LABEL[d.acao] ?? d.acao,
+      pedido_numero: d.producao_pedidos?.numero_pedido ?? null,
+      pedido_cliente: d.producao_pedidos?.cliente_nome ?? null,
+      detalhe:
+        d.acao === 'status_alterado'
+          ? `${STATUS_LABEL[d.dados_antigos?.status] ?? d.dados_antigos?.status ?? '—'} → ${STATUS_LABEL[d.dados_novos?.status] ?? d.dados_novos?.status ?? '—'}`
+          : null,
+    })
+  }
+
+  for (const d of (ocorrencias.data ?? []) as any[]) {
+    entradas.push({
+      id: `ocorrencia-criada-${d.id}`,
+      data_hora: d.registrado_em,
+      usuario_nome: d.registrador?.nome ?? null,
+      acao: 'Ocorrência registrada',
+      pedido_numero: d.producao_pedidos?.numero_pedido ?? null,
+      pedido_cliente: d.producao_pedidos?.cliente_nome ?? null,
+      detalhe: OCORRENCIA_CATEGORIA_LABEL[d.categoria] ?? d.categoria,
+    })
+    if (d.resolvida_em) {
+      entradas.push({
+        id: `ocorrencia-resolvida-${d.id}`,
+        data_hora: d.resolvida_em,
+        usuario_nome: d.resolvedor?.nome ?? null,
+        acao: 'Ocorrência resolvida',
+        pedido_numero: d.producao_pedidos?.numero_pedido ?? null,
+        pedido_cliente: d.producao_pedidos?.cliente_nome ?? null,
+        detalhe: OCORRENCIA_CATEGORIA_LABEL[d.categoria] ?? d.categoria,
+      })
+    }
+  }
+
+  for (const d of (handoffs.data ?? []) as any[]) {
+    entradas.push({
+      id: `handoff-${d.id}`,
+      data_hora: d.data_hora,
+      usuario_nome: d.entregue_por_nome,
+      acao: 'Handoff registrado',
+      pedido_numero: d.producao_pedidos?.numero_pedido ?? null,
+      pedido_cliente: d.producao_pedidos?.cliente_nome ?? null,
+      detalhe: `${d.entregue_por_nome} → ${d.recebido_por_nome}`,
+    })
+  }
+
+  return entradas.sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime())
 }

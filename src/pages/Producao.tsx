@@ -35,14 +35,17 @@ import {
   Pencil,
   Paperclip,
   AlertOctagon,
+  ScrollText,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { useIsAdmin } from '@/hooks/use-is-admin'
 import { ModalNovoPedidoProducao } from '@/components/producao/ModalNovoPedidoProducao'
 import { ModalAtualizarStatusProducao } from '@/components/producao/ModalAtualizarStatusProducao'
 import { ModalHandoffProducao } from '@/components/producao/ModalHandoffProducao'
 import { ModalOcorrenciaProducao } from '@/components/producao/ModalOcorrenciaProducao'
 import { PedidoDetalhesExpandido } from '@/components/producao/PedidoDetalhesExpandido'
+import { LogPanelProducao } from '@/components/producao/LogPanelProducao'
 import {
   listarProducaoPedidos,
   getEmpresas,
@@ -101,6 +104,12 @@ function fmtDate(v: string | null): string {
 
 export default function Producao() {
   const { toast } = useToast()
+  const { isAdmin } = useIsAdmin()
+
+  // SPEC-174 N10: aba "Log" (histórico de quem fez o quê), visível só para
+  // administrador. Some da UI pra quem não é admin — defesa em profundidade
+  // real está na RLS de producao_pedidos_log (só admin lê).
+  const [view, setView] = useState<'pedidos' | 'log'>('pedidos')
 
   const [pedidos, setPedidos] = useState<ProducaoPedidoRow[]>([])
   const [empresas, setEmpresas] = useState<Empresa[]>([])
@@ -182,24 +191,49 @@ export default function Producao() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 shrink-0">
-        {TIPOS.map((t) => (
+      <div className="flex flex-wrap items-center justify-between gap-1.5 shrink-0">
+        <div className="flex flex-wrap gap-1.5">
+          {TIPOS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => {
+                setView('pedidos')
+                setTipoPeca(t.value)
+              }}
+              className={cn(
+                'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+                view === 'pedidos' && tipoPeca === t.value
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* SPEC-174 N10: aba "Log" só aparece para administrador. */}
+        {isAdmin && (
           <button
-            key={t.value}
             type="button"
-            onClick={() => setTipoPeca(t.value)}
+            onClick={() => setView((v) => (v === 'log' ? 'pedidos' : 'log'))}
             className={cn(
-              'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
-              tipoPeca === t.value
+              'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+              view === 'log'
                 ? 'bg-primary text-primary-foreground border-primary'
                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50',
             )}
           >
-            {t.label}
+            <ScrollText className="w-3.5 h-3.5" />
+            Log
           </button>
-        ))}
+        )}
       </div>
 
+      {view === 'log' ? (
+        <LogPanelProducao />
+      ) : (
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex-1 overflow-hidden flex flex-col min-h-0">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 border-b border-slate-100 shrink-0">
           <div className="relative flex-1 min-w-[200px]">
@@ -539,6 +573,7 @@ export default function Producao() {
           </Table>
         </div>
       </div>
+      )}
 
       <ModalNovoPedidoProducao
         open={modalNovoOpen}

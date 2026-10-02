@@ -9,6 +9,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Loader2, RefreshCcw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -17,14 +24,26 @@ import {
   normalizarStatus,
   STATUS_SUGESTOES,
   STATUS_LABEL,
+  STATUS_OUTRO,
   type ProducaoPedidoRow,
 } from '@/services/producao'
 
 // SPEC-156 Módulo 1 — status é texto livre no banco (sem CHECK, a planilha
 // real tem dado sujo: PRONTO/Pronto/PRONTA + CANCELADO/EXCLUÍDO/ENTRADA
-// PARCIAL). Este modal oferece sugestões via <datalist> mas aceita
-// qualquer valor digitado. Quando o valor final é "pronto", exige também a
-// data em que a peça ficou pronta (grava em data_ficou_pronto).
+// PARCIAL).
+//
+// SPEC-174 N11: antes, este modal era um <Input list="..."> com
+// <datalist> — o usuário relatou "os status não estão aparecendo para
+// selecionar, apenas na descrição de quais status tem" (o rodapé "Sugestões:
+// ..." é só texto; o <datalist> nativo não abre de forma confiável dentro
+// do Dialog do Radix, que tem overlay/focus-trap próprios — diferente dos
+// outros 3 campos do sistema (Tipo de peça, Empresa, Prioridade em
+// ModalNovoPedidoProducao.tsx), que já usam o <Select> do Radix e funcionam
+// normalmente dentro do mesmo Dialog). Troca para <Select> real (igual ao
+// resto do sistema), com a opção "Outro" revelando um campo de texto livre
+// — mesmo padrão de OCORRENCIA_OUTRO em ModalOcorrenciaProducao.tsx — para
+// não perder a capacidade de digitar um status fora da lista (dado sujo
+// real da planilha, sem CHECK no banco).
 
 interface Props {
   open: boolean
@@ -39,21 +58,38 @@ function today(): string {
 
 export function ModalAtualizarStatusProducao({ open, onOpenChange, pedido, onSuccess }: Props) {
   const { toast } = useToast()
-  const [status, setStatus] = useState('')
+  // SPEC-174 N11: statusSelecionado guarda o valor do <Select> (uma das
+  // STATUS_SUGESTOES ou o sentinela STATUS_OUTRO); statusLivre só é usado
+  // quando "Outro" está selecionado.
+  const [statusSelecionado, setStatusSelecionado] = useState('')
+  const [statusLivre, setStatusLivre] = useState('')
   const [dataFicouPronto, setDataFicouPronto] = useState(today())
   const [salvando, setSalvando] = useState(false)
 
   useEffect(() => {
     if (!open || !pedido) return
-    setStatus(pedido.status)
+    const atual = normalizarStatus(pedido.status)
+    if ((STATUS_SUGESTOES as readonly string[]).includes(atual)) {
+      setStatusSelecionado(atual)
+      setStatusLivre('')
+    } else {
+      // Status legado (ex.: "em_andamento") ou qualquer outro valor digitado
+      // antes — não está nas sugestões, mas não pode desaparecer: cai em
+      // "Outro" já preenchido com o valor exato que o pedido tem hoje.
+      setStatusSelecionado(STATUS_OUTRO)
+      setStatusLivre(pedido.status)
+    }
     setDataFicouPronto(pedido.data_ficou_pronto || today())
   }, [open, pedido])
 
   if (!pedido) return null
 
+  const ehOutro = statusSelecionado === STATUS_OUTRO
+  const status = ehOutro ? statusLivre.trim() : statusSelecionado
   const statusNormalizado = normalizarStatus(status)
   const ehPronto = statusNormalizado === 'pronto'
-  const podeSalvar = !!status.trim() && (!ehPronto || !!dataFicouPronto)
+  const podeSalvar =
+    !!statusSelecionado && (!ehOutro || !!statusLivre.trim()) && (!ehPronto || !!dataFicouPronto)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -97,22 +133,30 @@ export function ModalAtualizarStatusProducao({ open, onOpenChange, pedido, onSuc
 
           <div className="space-y-2">
             <Label>Status</Label>
-            <Input
-              list="status-sugestoes-producao"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              placeholder="Digite ou escolha uma sugestão..."
-            />
-            <datalist id="status-sugestoes-producao">
-              {STATUS_SUGESTOES.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </option>
-              ))}
-            </datalist>
+            <Select value={statusSelecionado} onValueChange={setStatusSelecionado}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione..." />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUS_SUGESTOES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {STATUS_LABEL[s]}
+                  </SelectItem>
+                ))}
+                <SelectItem value={STATUS_OUTRO}>Outro (escrever)</SelectItem>
+              </SelectContent>
+            </Select>
+            {ehOutro && (
+              <Input
+                autoFocus
+                value={statusLivre}
+                onChange={(e) => setStatusLivre(e.target.value)}
+                placeholder="Digite o status..."
+              />
+            )}
             <p className="text-[11px] text-slate-400">
-              Sugestões: {STATUS_SUGESTOES.map((s) => STATUS_LABEL[s]).join(', ')}. Qualquer outro
-              valor digitado também é aceito.
+              Sugestões: {STATUS_SUGESTOES.map((s) => STATUS_LABEL[s]).join(', ')}. Escolha "Outro"
+              para digitar um valor fora da lista.
             </p>
           </div>
 
