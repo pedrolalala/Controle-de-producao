@@ -78,7 +78,12 @@ export function LogPanelProducao() {
             onChange={(e) => setBusca(e.target.value)}
           />
         </div>
-        <Button variant="outline" onClick={carregar} className="shadow-sm h-9 shrink-0" disabled={loading}>
+        <Button
+          variant="outline"
+          onClick={carregar}
+          className="shadow-sm h-9 shrink-0"
+          disabled={loading}
+        >
           <RefreshCw className={loading ? 'w-4 h-4 mr-2 animate-spin' : 'w-4 h-4 mr-2'} />
           Atualizar
         </Button>
@@ -124,7 +129,9 @@ export function LogPanelProducao() {
             ) : (
               filtradas.map((e) => (
                 <TableRow key={e.id} className="h-12 border-b border-slate-50">
-                  <TableCell className="text-sm text-slate-600">{fmtDataHora(e.data_hora)}</TableCell>
+                  <TableCell className="text-sm text-slate-600">
+                    {fmtDataHora(e.data_hora)}
+                  </TableCell>
                   <TableCell className="text-sm text-slate-700">{e.usuario_nome ?? '—'}</TableCell>
                   <TableCell className="text-sm text-slate-900 font-medium">{e.acao}</TableCell>
                   <TableCell className="text-sm text-slate-600">

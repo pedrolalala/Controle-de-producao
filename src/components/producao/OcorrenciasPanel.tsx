@@ -79,7 +79,10 @@ export function OcorrenciasPanel({ ocorrencias, loading, onChange }: Props) {
       ) : (
         <ul className="space-y-2">
           {ocorrencias.map((o) => (
-            <li key={o.id} className="text-xs text-slate-600 rounded-md border border-slate-200 bg-white p-2">
+            <li
+              key={o.id}
+              className="text-xs text-slate-600 rounded-md border border-slate-200 bg-white p-2"
+            >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="flex-1 min-w-[200px]">
                   <span className="font-medium text-red-700">
@@ -142,7 +145,13 @@ export function OcorrenciasPanel({ ocorrencias, loading, onChange }: Props) {
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
                   <Camera className="w-3.5 h-3.5 text-slate-400" />
                   {o.fotos_urls.map((url, i) => (
-                    <a key={url} href={url} target="_blank" rel="noopener noreferrer" title={`Foto ${i + 1}`}>
+                    <a
+                      key={url}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Foto ${i + 1}`}
+                    >
                       <img
                         src={url}
                         alt={`Foto ${i + 1} da ocorrência`}

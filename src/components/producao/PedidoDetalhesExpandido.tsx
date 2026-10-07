@@ -134,7 +134,9 @@ export function PedidoDetalhesExpandido({ pedido, onChange }: Props) {
             {edicoes.map((e) => (
               <li key={e.id} className="text-xs text-slate-600">
                 Editado por{' '}
-                <span className="font-medium text-slate-800">{e.editado_por_nome ?? 'usuário'}</span>{' '}
+                <span className="font-medium text-slate-800">
+                  {e.editado_por_nome ?? 'usuário'}
+                </span>{' '}
                 em {fmtDataHora(e.editado_em)}
               </li>
             ))}

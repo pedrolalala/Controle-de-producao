@@ -433,9 +433,7 @@ export function ModalNovoPedidoProducao({ open, onOpenChange, onSuccess, pedido 
                   disabled={uploadandoAnexo}
                   onClick={() => anexoInputRef.current?.click()}
                 >
-                  {uploadandoAnexo ? (
-                    <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                  ) : null}
+                  {uploadandoAnexo ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
                   Adicionar desenho
                 </Button>
                 <input

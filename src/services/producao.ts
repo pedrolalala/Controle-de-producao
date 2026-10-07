@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase/client'
 
 // SPEC-156 Módulo 1 — Controle de Produção. Réplica digital da planilha
+// (Edge Functions: nenhuma — este sistema não carrega cópia de função.)
 // "CONTROLE DE PRODUÇÃO (1).xlsx" (3 abas: LINEAS E STECCAS / PEÇAS AVULSAS
 // / CORTES (GAP - SLOT - VISTA)), com gestão de status em tempo real e
 // handoff com dupla assinatura (quem entrega / quem recebe).
@@ -476,9 +477,7 @@ export interface ProducaoPedidoEdicaoRow {
   editado_em: string
 }
 
-export async function listarEdicoes(
-  producaoPedidoId: string,
-): Promise<ProducaoPedidoEdicaoRow[]> {
+export async function listarEdicoes(producaoPedidoId: string): Promise<ProducaoPedidoEdicaoRow[]> {
   const { data, error } = await (supabase as any)
     .from('producao_pedido_edicoes')
     .select('*, usuarios:editado_por(nome)')
