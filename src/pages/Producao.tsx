@@ -36,10 +36,23 @@ import {
   Paperclip,
   AlertOctagon,
   ScrollText,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { useIsAdmin } from '@/hooks/use-is-admin'
+import { usePodeAlterar } from '@/hooks/use-pode-alterar'
 import { ModalNovoPedidoProducao } from '@/components/producao/ModalNovoPedidoProducao'
 import { ModalAtualizarStatusProducao } from '@/components/producao/ModalAtualizarStatusProducao'
 import { ModalHandoffProducao } from '@/components/producao/ModalHandoffProducao'
@@ -50,6 +63,7 @@ import {
   listarProducaoPedidos,
   getEmpresas,
   normalizarStatus,
+  definirProducaoPedidoInativo,
   TIPO_PECA_LABEL,
   PRIORIDADE_LABEL,
   STATUS_LABEL,
@@ -57,6 +71,7 @@ import {
   type TipoPecaProducao,
   type PrioridadeProducao,
   type Empresa,
+  type SituacaoProducao,
 } from '@/services/producao'
 
 // SPEC-156 — Controle de Produção. As 3 abas da planilha real (LINEAS E
@@ -68,6 +83,14 @@ const TIPOS: Array<{ value: TipoPecaProducao | 'todos'; label: string }> = [
   { value: 'lineas_steccas', label: TIPO_PECA_LABEL.lineas_steccas },
   { value: 'peca_avulsa', label: TIPO_PECA_LABEL.peca_avulsa },
   { value: 'corte', label: TIPO_PECA_LABEL.corte },
+]
+
+// SPEC-191 A3: "quando ele ficar pronto, ele sai da visualização primária e
+// fica em uma outra aba". A1: inativados (em vez de apagados) têm aba própria.
+const SITUACOES: Array<{ value: SituacaoProducao; label: string }> = [
+  { value: 'abertos', label: 'Em aberto' },
+  { value: 'concluidos', label: 'Concluídos' },
+  { value: 'inativos', label: 'Inativos' },
 ]
 
 const PRIORIDADE_BADGE: Record<PrioridadeProducao, string> = {
@@ -105,6 +128,8 @@ function fmtDate(v: string | null): string {
 export default function Producao() {
   const { toast } = useToast()
   const { isAdmin } = useIsAdmin()
+  // SPEC-191 A5: todos veem; só o pessoal do estoque altera.
+  const { podeAlterar } = usePodeAlterar()
 
   // SPEC-174 N10: aba "Log" (histórico de quem fez o quê), visível só para
   // administrador. Some da UI pra quem não é admin — defesa em profundidade
@@ -115,6 +140,8 @@ export default function Producao() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [loading, setLoading] = useState(true)
 
+  const [situacao, setSituacao] = useState<SituacaoProducao>('abertos')
+  const [pedidoInativando, setPedidoInativando] = useState<ProducaoPedidoRow | null>(null)
   const [tipoPeca, setTipoPeca] = useState<TipoPecaProducao | 'todos'>('todos')
   const [empresaId, setEmpresaId] = useState<string>('todas')
   const [prioridade, setPrioridade] = useState<PrioridadeProducao | 'todas'>('todas')
@@ -143,6 +170,7 @@ export default function Producao() {
     setLoading(true)
     try {
       const data = await listarProducaoPedidos({
+        situacao,
         tipo_peca: tipoPeca === 'todos' ? undefined : tipoPeca,
         empresa_id: empresaId === 'todas' ? undefined : empresaId,
         prioridade: prioridade === 'todas' ? undefined : prioridade,
@@ -158,7 +186,31 @@ export default function Producao() {
     } finally {
       setLoading(false)
     }
-  }, [tipoPeca, empresaId, prioridade, debouncedSearch, toast])
+  }, [situacao, tipoPeca, empresaId, prioridade, debouncedSearch, toast])
+
+  const confirmarInativacao = async () => {
+    const p = pedidoInativando
+    if (!p) return
+    const inativar = !p.inativo
+    try {
+      await definirProducaoPedidoInativo(p.id, inativar)
+      toast({
+        title: inativar ? 'Pedido inativado' : 'Pedido reativado',
+        description: inativar
+          ? 'Ele saiu das listas e fica na aba Inativos.'
+          : 'Ele voltou para as listas.',
+      })
+      loadPedidos()
+    } catch {
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível alterar o pedido.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPedidoInativando(null)
+    }
+  }
 
   useEffect(() => {
     loadPedidos()
@@ -185,11 +237,33 @@ export default function Producao() {
             Cortes) — status em tempo real, sem precisar ligar para ninguém.
           </p>
         </div>
-        <Button onClick={() => setModalNovoOpen(true)} className="shadow-sm w-full sm:w-auto">
-          <Plus className="w-4 h-4 mr-2" />
-          Novo pedido
-        </Button>
+        {podeAlterar && (
+          <Button onClick={() => setModalNovoOpen(true)} className="shadow-sm w-full sm:w-auto">
+            <Plus className="w-4 h-4 mr-2" />
+            Novo pedido
+          </Button>
+        )}
       </div>
+
+      {view === 'pedidos' && (
+        <div className="inline-flex self-start rounded-lg border border-slate-200 bg-slate-100 p-0.5 shrink-0">
+          {SITUACOES.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              onClick={() => setSituacao(s.value)}
+              className={cn(
+                'px-4 py-1.5 rounded-md text-sm font-medium transition-colors',
+                situacao === s.value
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700',
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-1.5 shrink-0">
         <div className="flex flex-wrap gap-1.5">
@@ -248,10 +322,15 @@ export default function Producao() {
 
             <Select value={empresaId} onValueChange={setEmpresaId}>
               <SelectTrigger className="h-9 w-full sm:w-[160px]">
-                <SelectValue placeholder="Empresa" />
+                {/* SPEC-191 A4: rótulo "Empresas"; dentro, Todas / Foco / ISLIGHT / Manoela. */}
+                <SelectValue placeholder="Empresas">
+                  {empresaId === 'todas'
+                    ? 'Empresas'
+                    : (empresas.find((e) => e.id === empresaId)?.nome ?? 'Empresas')}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="todas">Todas as empresas</SelectItem>
+                <SelectItem value="todas">Todas</SelectItem>
                 {empresas.map((e) => (
                   <SelectItem key={e.id} value={e.id}>
                     {e.nome}
@@ -265,10 +344,12 @@ export default function Producao() {
               onValueChange={(v) => setPrioridade(v as PrioridadeProducao | 'todas')}
             >
               <SelectTrigger className="h-9 w-full sm:w-[140px]">
-                <SelectValue placeholder="Prioridade" />
+                <SelectValue placeholder="Prioridade">
+                  {prioridade === 'todas' ? 'Prioridade' : PRIORIDADE_LABEL[prioridade]}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="todas">Toda prioridade</SelectItem>
+                <SelectItem value="todas">Todas</SelectItem>
                 <SelectItem value="normal">{PRIORIDADE_LABEL.normal}</SelectItem>
                 <SelectItem value="urgente">{PRIORIDADE_LABEL.urgente}</SelectItem>
               </SelectContent>
@@ -333,7 +414,7 @@ export default function Producao() {
                   <TableHead className="w-[80px] text-slate-600 font-semibold text-xs uppercase tracking-wide">
                     PDFs
                   </TableHead>
-                  <TableHead className="pr-4 sm:pr-6 w-[280px] text-right text-slate-600 font-semibold text-xs uppercase tracking-wide">
+                  <TableHead className="pr-4 sm:pr-6 w-[340px] text-right text-slate-600 font-semibold text-xs uppercase tracking-wide sticky right-0 bg-slate-50 shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.15)]">
                     Ação
                   </TableHead>
                 </TableRow>
@@ -461,8 +542,9 @@ export default function Producao() {
                           <TableCell className="align-middle py-2">
                             <button
                               type="button"
+                              disabled={!podeAlterar || p.inativo}
                               onClick={() => setPedidoStatusSelecionado(p)}
-                              title="Clique para atualizar o status"
+                              title={podeAlterar ? 'Clique para atualizar o status' : undefined}
                             >
                               <Badge
                                 className={cn('border font-medium', statusBadgeClass(p.status))}
@@ -528,50 +610,82 @@ export default function Producao() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="pr-4 sm:pr-6 text-right align-middle py-2">
-                            <div className="flex justify-end gap-1">
+                          {/* SPEC-191 A2: coluna de ação fixa à direita — numa tela menor o
+                              botão Editar ficava fora da área visível da tabela. */}
+                          <TableCell className="pr-4 sm:pr-6 text-right align-middle py-2 sticky right-0 bg-white shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.15)]">
+                            {!podeAlterar ? (
+                              <span className="text-[11px] text-slate-400">
+                                Somente visualização
+                              </span>
+                            ) : p.inativo ? (
                               <Button
                                 size="sm"
                                 variant="outline"
                                 className="h-7 px-2 text-xs"
-                                onClick={() => setPedidoEditando(p)}
+                                onClick={() => setPedidoInativando(p)}
                               >
-                                <Pencil className="w-3.5 h-3.5 mr-1" />
-                                Editar
+                                <ArchiveRestore className="w-3.5 h-3.5 mr-1" />
+                                Reativar
                               </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs"
-                                onClick={() => setPedidoStatusSelecionado(p)}
-                              >
-                                Status
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                                onClick={() => setPedidoHandoffSelecionado(p)}
-                              >
-                                <ClipboardCheck className="w-3.5 h-3.5 mr-1" />
-                                Handoff
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs text-red-700 border-red-200 hover:bg-red-50"
-                                onClick={() => setPedidoOcorrenciaSelecionado(p)}
-                              >
-                                <AlertOctagon className="w-3.5 h-3.5 mr-1" />
-                                Ocorrência
-                              </Button>
-                            </div>
+                            ) : (
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setPedidoEditando(p)}
+                                >
+                                  <Pencil className="w-3.5 h-3.5 mr-1" />
+                                  Editar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setPedidoStatusSelecionado(p)}
+                                >
+                                  Status
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                                  onClick={() => setPedidoHandoffSelecionado(p)}
+                                >
+                                  <ClipboardCheck className="w-3.5 h-3.5 mr-1" />
+                                  Handoff
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-red-700 border-red-200 hover:bg-red-50"
+                                  onClick={() => setPedidoOcorrenciaSelecionado(p)}
+                                >
+                                  <AlertOctagon className="w-3.5 h-3.5 mr-1" />
+                                  Ocorrência
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-slate-600"
+                                  title="Inativar (em vez de apagar): sai das listas e fica na aba Inativos"
+                                  onClick={() => setPedidoInativando(p)}
+                                >
+                                  <Archive className="w-3.5 h-3.5 mr-1" />
+                                  Inativar
+                                </Button>
+                              </div>
+                            )}
                           </TableCell>
                         </TableRow>
                         {expandido && (
                           <TableRow className="hover:bg-transparent">
                             <TableCell colSpan={11} className="p-0">
-                              <PedidoDetalhesExpandido pedido={p} onChange={loadPedidos} />
+                              <PedidoDetalhesExpandido
+                                pedido={p}
+                                onChange={loadPedidos}
+                                podeAlterar={podeAlterar}
+                              />
                             </TableCell>
                           </TableRow>
                         )}
@@ -611,6 +725,27 @@ export default function Producao() {
         pedido={pedidoHandoffSelecionado}
         onSuccess={loadPedidos}
       />
+
+      <AlertDialog open={!!pedidoInativando} onOpenChange={(v) => !v && setPedidoInativando(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pedidoInativando?.inativo ? 'Reativar pedido?' : 'Inativar pedido?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pedidoInativando?.inativo
+                ? 'O pedido volta para as listas de Em aberto/Concluídos.'
+                : 'O pedido não é apagado: sai das listas e fica guardado na aba Inativos, com todo o histórico.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmarInativacao}>
+              {pedidoInativando?.inativo ? 'Reativar' : 'Inativar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ModalOcorrenciaProducao
         open={!!pedidoOcorrenciaSelecionado}

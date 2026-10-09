@@ -17,6 +17,7 @@ interface Props {
   ocorrencias: ProducaoPedidoOcorrenciaRow[]
   loading: boolean
   onChange: () => void
+  podeAlterar?: boolean
 }
 
 function today(): string {
@@ -34,7 +35,7 @@ function fmtDataHora(v: string): string {
   return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR')
 }
 
-export function OcorrenciasPanel({ ocorrencias, loading, onChange }: Props) {
+export function OcorrenciasPanel({ ocorrencias, loading, onChange, podeAlterar = true }: Props) {
   const { toast } = useToast()
   const [resolvendoId, setResolvendoId] = useState<string | null>(null)
   const [dataResolucao, setDataResolucao] = useState(today())
@@ -126,7 +127,7 @@ export function OcorrenciasPanel({ ocorrencias, loading, onChange }: Props) {
                       Cancelar
                     </Button>
                   </div>
-                ) : (
+                ) : !podeAlterar ? null : (
                   <Button
                     size="sm"
                     variant="outline"

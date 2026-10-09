@@ -135,6 +135,9 @@ export interface ProducaoPedidoRow {
   created_by: string | null
   created_at: string
   updated_at: string
+  // SPEC-191 A1: pedido não é apagado, é inativado (some das listas).
+  inativo: boolean
+  inativado_em: string | null
   // SPEC-161: contagens usadas pra indicadores na listagem (P3/P8), sem
   // precisar de uma query extra por linha.
   anexos_count: number
@@ -144,7 +147,12 @@ export interface ProducaoPedidoRow {
   ocorrencias_abertas_count: number
 }
 
+// SPEC-191 A3: a visão principal mostra só os em aberto; "Pronto" vai para a
+// aba Concluídos e os inativados para a aba Inativos.
+export type SituacaoProducao = 'abertos' | 'concluidos' | 'inativos'
+
 export interface ListarProducaoPedidosFiltro {
+  situacao?: SituacaoProducao
   tipo_peca?: TipoPecaProducao
   status?: string
   empresa_id?: string
@@ -163,6 +171,15 @@ export async function listarProducaoPedidos(
     .order('data_pedido', { ascending: false })
     .limit(500)
 
+  if (filtro.situacao === 'inativos') {
+    query = query.eq('inativo', true)
+  } else if (filtro.situacao) {
+    query = query.eq('inativo', false)
+    query =
+      filtro.situacao === 'concluidos'
+        ? query.ilike('status', 'pronto')
+        : query.not('status', 'ilike', 'pronto')
+  }
   if (filtro.tipo_peca) query = query.eq('tipo_peca', filtro.tipo_peca)
   if (filtro.status) query = query.eq('status', filtro.status)
   if (filtro.empresa_id) query = query.eq('empresa_id', filtro.empresa_id)
@@ -197,6 +214,8 @@ export async function listarProducaoPedidos(
     created_by: d.created_by,
     created_at: d.created_at,
     updated_at: d.updated_at,
+    inativo: !!d.inativo,
+    inativado_em: d.inativado_em ?? null,
     anexos_count: d.producao_pedido_anexos?.[0]?.count ?? 0,
     prazo_alteracoes_count: d.producao_pedido_prazo_alteracoes?.[0]?.count ?? 0,
     ocorrencias_count: (d.producao_pedido_ocorrencias ?? []).length,
@@ -306,6 +325,28 @@ export async function atualizarStatusProducaoPedido(id: string, status: string):
     .update({ status: status.trim() })
     .eq('id', id)
   if (error) throw error
+}
+
+// SPEC-191 A1: em vez de apagar, inativar (e poder reativar).
+export async function definirProducaoPedidoInativo(id: string, inativo: boolean): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser()
+  const { error } = await (supabase as any)
+    .from('producao_pedidos')
+    .update({
+      inativo,
+      inativado_em: inativo ? new Date().toISOString() : null,
+      inativado_por: inativo ? (userData?.user?.id ?? null) : null,
+    })
+    .eq('id', id)
+  if (error) throw error
+}
+
+// SPEC-191 A5: todos veem; só quem está em producao_editores altera (a RLS
+// das tabelas producao_* é a proteção real — isto só esconde os botões).
+export async function producaoPodeAlterar(): Promise<boolean> {
+  const { data, error } = await (supabase.rpc as any)('producao_pode_alterar')
+  if (error) return false
+  return data === true
 }
 
 export async function marcarProducaoPedidoPronto(

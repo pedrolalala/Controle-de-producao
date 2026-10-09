@@ -24,6 +24,8 @@ interface Props {
   pedido: ProducaoPedidoRow
   // Recarrega a listagem (contador de ocorrências em aberto na linha).
   onChange?: () => void
+  // SPEC-191 A5: quem só visualiza não vê "Marcar como resolvida".
+  podeAlterar?: boolean
 }
 
 function fmtDate(v: string | null): string {
@@ -37,7 +39,7 @@ function fmtDataHora(v: string): string {
   return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR')
 }
 
-export function PedidoDetalhesExpandido({ pedido, onChange }: Props) {
+export function PedidoDetalhesExpandido({ pedido, onChange, podeAlterar = true }: Props) {
   const [prazoAlteracoes, setPrazoAlteracoes] = useState<ProducaoPedidoPrazoAlteracaoRow[]>([])
   const [edicoes, setEdicoes] = useState<ProducaoPedidoEdicaoRow[]>([])
   const [ocorrencias, setOcorrencias] = useState<ProducaoPedidoOcorrenciaRow[]>([])
@@ -79,6 +81,7 @@ export function PedidoDetalhesExpandido({ pedido, onChange }: Props) {
         ocorrencias={ocorrencias}
         loading={loading}
         onChange={recarregarOcorrencias}
+        podeAlterar={podeAlterar}
       />
 
       {pedido.observacao && (
