@@ -30,7 +30,7 @@ export function AppHeader() {
           className="text-slate-600 hover:text-slate-900 hover:bg-slate-100"
         >
           <a
-            href="https://central-lucenera-dashboard-1c9ba.goskip.app/dashboard"
+            href="https://central-lucenera.pages.dev/dashboard"
             title="Voltar para a Central Lucenera"
           >
             <Building2 className="w-4 h-4 mr-1.5" />
