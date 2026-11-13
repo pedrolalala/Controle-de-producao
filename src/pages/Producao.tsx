@@ -383,7 +383,7 @@ export default function Producao() {
           </div>
 
           <div className="overflow-auto flex-1">
-            <Table className="min-w-[1300px] w-full table-fixed">
+            <Table className="min-w-[1580px] w-full table-fixed">
               <TableHeader className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
                 <TableRow className="h-11">
                   <TableHead className="w-[36px] pl-4 sm:pl-6" />
@@ -411,10 +411,10 @@ export default function Producao() {
                   <TableHead className="w-[140px] text-slate-600 font-semibold text-xs uppercase tracking-wide">
                     Status
                   </TableHead>
-                  <TableHead className="w-[80px] text-slate-600 font-semibold text-xs uppercase tracking-wide">
+                  <TableHead className="w-[130px] text-slate-600 font-semibold text-xs uppercase tracking-wide">
                     PDFs
                   </TableHead>
-                  <TableHead className="pr-4 sm:pr-6 w-[340px] text-right text-slate-600 font-semibold text-xs uppercase tracking-wide sticky right-0 bg-slate-50 shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.15)]">
+                  <TableHead className="pr-4 sm:pr-6 w-[460px] text-right text-slate-600 font-semibold text-xs uppercase tracking-wide sticky right-0 bg-slate-50 shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.15)]">
                     Ação
                   </TableHead>
                 </TableRow>
