@@ -38,6 +38,7 @@ import {
   ScrollText,
   Archive,
   ArchiveRestore,
+  Loader2,
 } from 'lucide-react'
 import {
   AlertDialog,
@@ -64,6 +65,7 @@ import {
   getEmpresas,
   normalizarStatus,
   definirProducaoPedidoInativo,
+  listarAnexos,
   TIPO_PECA_LABEL,
   PRIORIDADE_LABEL,
   STATUS_LABEL,
@@ -73,6 +75,7 @@ import {
   type Empresa,
   type SituacaoProducao,
 } from '@/services/producao'
+import { abrirPedidoEDesenhos, arquivosDoPedido } from '@/lib/juntar-pedido-e-desenhos'
 
 // SPEC-156 — Controle de Produção. As 3 abas da planilha real (LINEAS E
 // STECCAS / PEÇAS AVULSAS / CORTES) viram um filtro de tipo_peca, não 3
@@ -128,6 +131,36 @@ function fmtDate(v: string | null): string {
 export default function Producao() {
   const { toast } = useToast()
   const { isAdmin } = useIsAdmin()
+  // SPEC-329: pedido id em que o PDF único (pedido + desenhos) está sendo montado
+  const [abrindoTudoId, setAbrindoTudoId] = useState<string | null>(null)
+
+  // SPEC-329 (Central 6df28efe): um clique abre o pedido e todos os desenhos num único PDF
+  const abrirPedidoComDesenhos = async (p: ProducaoPedidoRow) => {
+    setAbrindoTudoId(p.id)
+    try {
+      const anexos = p.anexos_count > 0 ? await listarAnexos(p.id) : []
+      const arquivos = arquivosDoPedido(p, anexos)
+      const r = await abrirPedidoEDesenhos(
+        arquivos,
+        `Pedido ${p.numero_pedido || p.id.slice(0, 8)} - pedido e desenhos.pdf`,
+      )
+      if (r.falhas.length > 0) {
+        toast({
+          title: 'Alguns arquivos não entraram no PDF',
+          description: r.falhas.map((f) => `${f.nome}: ${f.motivo}`).join(' · '),
+          variant: 'destructive',
+        })
+      }
+    } catch (e: any) {
+      toast({
+        title: 'Não foi possível abrir o pedido e os desenhos',
+        description: e?.message || 'Tente novamente.',
+        variant: 'destructive',
+      })
+    } finally {
+      setAbrindoTudoId(null)
+    }
+  }
   // SPEC-191 A5: todos veem; só o pessoal do estoque altera.
   const { podeAlterar } = usePodeAlterar()
 
@@ -580,6 +613,24 @@ export default function Producao() {
                           </TableCell>
                           <TableCell className="align-middle py-2">
                             <div className="flex flex-col gap-0.5">
+                              {(p.pdf_pedido_url ? 1 : 0) + (p.pdf_desenho_url ? 1 : 0) + p.anexos_count >= 2 && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="mb-1 h-6 gap-1 px-2 text-[11px]"
+                                  disabled={abrindoTudoId === p.id}
+                                  onClick={() => abrirPedidoComDesenhos(p)}
+                                  title="Abre o pedido e todos os desenhos num único PDF"
+                                >
+                                  {abrindoTudoId === p.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <FileText className="h-3 w-3" />
+                                  )}{' '}
+                                  Abrir pedido + desenhos
+                                </Button>
+                              )}
                               {p.pdf_pedido_url && (
                                 <a
                                   href={p.pdf_pedido_url}
@@ -601,9 +652,15 @@ export default function Producao() {
                                 </a>
                               )}
                               {p.anexos_count > 0 && (
-                                <span className="inline-flex items-center gap-1 text-slate-500 text-[11px]">
+                                <button
+                                  type="button"
+                                  onClick={() => abrirPedidoComDesenhos(p)}
+                                  disabled={abrindoTudoId === p.id}
+                                  className="inline-flex items-center gap-1 text-primary hover:underline text-[11px] text-left disabled:opacity-60"
+                                  title="Abrir os anexos (junto com o pedido) num único PDF"
+                                >
                                   <Paperclip className="w-3 h-3" /> {p.anexos_count} anexo(s)
-                                </span>
+                                </button>
                               )}
                               {!p.pdf_pedido_url && !p.pdf_desenho_url && p.anexos_count === 0 && (
                                 <span className="text-[11px] text-slate-400">—</span>
